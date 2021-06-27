@@ -33,6 +33,11 @@
 # Web related
 lib/generated_plugin_registrant.dart
 
+# Android related
+android/app/google-services.json
+android/key.properties
+upload-keystore.jks
+
 # Symbolication related
 app.*.symbols
 

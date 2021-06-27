@@ -1,9 +1,13 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:passstore/screens/biometric.dart';
+import 'package:passstore/screens/loginForm.dart';
 
 
-void main() {
-
+void main()async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(MyApp());
 }
 
@@ -14,7 +18,18 @@ class MyApp extends StatelessWidget {
       theme: ThemeData.dark(),
       debugShowCheckedModeBanner: false,
 
-      home: Bio(),
+      home: StreamBuilder(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, AsyncSnapshot<User> user) {
+          if(user.connectionState == ConnectionState.waiting){
+            return CircularProgressIndicator();
+          }
+          if(user.hasData){
+            return Bio();
+          }
+          return LoginForm();
+        }
+      ),
     );
   }
 }

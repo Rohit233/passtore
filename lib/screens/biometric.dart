@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:local_auth/local_auth.dart';
 import 'package:passstore/screens/home.dart';
 class Bio extends StatefulWidget {
   @override

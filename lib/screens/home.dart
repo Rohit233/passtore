@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:passstore/helperfiles/Database_helper.dart';
@@ -17,7 +19,7 @@ class _HomeState extends State<Home> {
   DatabaseHelper helper=DatabaseHelper();
   RefreshController refreshController=RefreshController();
   bool isSwipeLeft=false;
-  List<Map<String,dynamic>> detailsPassDecrypted=List();
+  User user;
   _DialogForm(){
     showDialog(context: context,builder: (context){
       return AlertDialog(
@@ -50,16 +52,11 @@ class _HomeState extends State<Home> {
           RaisedButton(
             onPressed: ()async{
            Map<String,dynamic> details=Map();
-           String EncryptedPassword=await platformChannel.invokeMethod("Encrypt",{"text":passTextEditor.text});
+           String encryptedPassword=await platformChannel.invokeMethod("Encrypt",{"text":passTextEditor.text});
            String encryptedName = await platformChannel.invokeMethod("Encrypt",{"text": siteTextEditor.text});
-           details.addAll( {"Site":encryptedName,"Password":EncryptedPassword});
-              helper.insertPass(details).whenComplete((){
-                getDataFromDb();
-              });
+           details.addAll( {"Site":encryptedName,"Password":encryptedPassword,'userId':user.uid});
+              helper.insertData(details);
               Navigator.pop(context);
-
-
-
             },
             child: Text("Store"),
             shape: RoundedRectangleBorder(
@@ -70,26 +67,22 @@ class _HomeState extends State<Home> {
       );
     });
   }
-  Future getDataFromDb()async{
-    List<Map<String,dynamic>> detailsPass=List();
-    detailsPassDecrypted.clear();
-    Directory directory=await getExternalStorageDirectory();
-    print(directory.path);
-    detailsPass=await helper.getAllPass();
-    detailsPass.forEach((element)async {
-   String decryptPassword= await platformChannel.invokeMethod('Decrypt',{"encryptedText":element["Password"]});
-   String decryptSiteName = await platformChannel.invokeMethod("Decrypt",{'encryptedText': element['Site']});
-    detailsPassDecrypted.add({"id":element["id"],"Site":decryptSiteName,"Password":decryptPassword});
-    });
-    setState(() {
 
-    });
-  }
   @override
   void initState() {
-    getDataFromDb();
+    user = FirebaseAuth.instance.currentUser;
     super.initState();
   }
+
+Future<List<Map>> decryptPass(List listEncryptPass) async{
+   List<Map> detailsPassDecrypted = [];
+  await listEncryptPass.forEach((element)async {
+      String decryptedSiteName = await platformChannel.invokeMethod("Decrypt",{"encryptedText":element.data()['site']});
+      String decryptedPass = await platformChannel.invokeMethod("Decrypt",{"encryptedText":element.data()['password']});
+      detailsPassDecrypted.add({'Site': decryptedSiteName,'Password':decryptedPass,'id':element.id,'created_at':element.data()['created_at']});
+    });
+  return detailsPassDecrypted; 
+ }
 
   Widget slideLeftBackground(){
     return Container(
@@ -147,10 +140,10 @@ class _HomeState extends State<Home> {
       ),
     );
   }
-  warningDelete(context,site,detailsPassDecrypted,helper){
+  warningDelete(context,detailsPassDecrypted){
     return showDialog(context:context,builder: (context){
       return AlertDialog(
-        title: Text("Are you sure to delete ${site} password"),
+        title: Text("Are you sure to delete ${detailsPassDecrypted['Site']} password"),
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(15.0))
         ),
@@ -165,8 +158,7 @@ class _HomeState extends State<Home> {
           ),
           RaisedButton(
             onPressed: (){
-              helper.deletePass(detailsPassDecrypted["id"]);
-              this.detailsPassDecrypted.remove(detailsPassDecrypted);
+              helper.deleteData(detailsPassDecrypted);
              Navigator.pop(context);
              setState(() {
 
@@ -192,68 +184,80 @@ class _HomeState extends State<Home> {
         child: Icon(Icons.add),
 
       ),
-      body: SmartRefresher(
-        controller: refreshController,
-        onRefresh: (){
-          getDataFromDb().whenComplete((){
-            refreshController.refreshCompleted();
-          });
-        },
-        enablePullDown: true,
-        header: WaterDropMaterialHeader(),
-        child: ListView.builder(
-          itemCount: detailsPassDecrypted.length,
-          itemBuilder: (BuildContext context,i){
-            return Dismissible(
-              confirmDismiss: (direction)async{
-                if(direction==DismissDirection.endToStart) {
-                  return await(
-                      warningDelete(context, detailsPassDecrypted[i]["Site"],
-                          detailsPassDecrypted[i], helper)
-                  );
+      body: StreamBuilder<QuerySnapshot>(
+          stream: helper.getAllPass(),
+          builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+            if(snapshot.connectionState == ConnectionState.waiting){
+              return Center(child: CircularProgressIndicator());
+            }
+            if(snapshot.data == null || snapshot.data.docs.isEmpty){
+              return Center(
+                child: Text('No password found'),
+              );
+            }
+            
+            return FutureBuilder(
+              future: decryptPass(snapshot.data.docs),
+              initialData: [{}],
+              builder: (context, snapshot) {
+                if(snapshot.connectionState == ConnectionState.waiting){
+                  return Center(child: CircularProgressIndicator());
                 }
-                else{
+                return snapshot.data.isEmpty ? Text('None') :ListView.builder(
+                  itemCount: snapshot.data.length,
+                  itemBuilder: (BuildContext context,i){
+                    return Dismissible(
+                      confirmDismiss: (direction)async{
+                        if(direction==DismissDirection.endToStart) {
+                          return await(
+                              warningDelete(context,snapshot.data[i])
+                          );
+                        }
+                        else{
 
 
-                  return await(
-                      update(detailsPassDecrypted[i]['id'],detailsPassDecrypted[i]["Site"], detailsPassDecrypted[i]["Password"], context, platformChannel)
-                  );
+                          return await(
+                              update(snapshot.data[i], context, platformChannel)
+                          );
 
-                }
+                        }
 
-              },
-              onDismissed: (direction){
-                if(DismissDirection.endToStart==direction){
+                      },
+                      onDismissed: (direction){
+                        if(DismissDirection.endToStart==direction){
 
-                }
-                else if(DismissDirection.startToEnd==direction){
+                        }
+                        else if(DismissDirection.startToEnd==direction){
 
 
-                }
+                        }
 
-              },
-              background: slideRightBackground(),
-              secondaryBackground: slideLeftBackground(),
-              key: Key(detailsPassDecrypted[i].toString()),
-              child: InkWell(
-               child:ListTile(
-                title: Text(detailsPassDecrypted[i]["Site"]),
-                subtitle: Text(detailsPassDecrypted[i]["Password"]),
-                 trailing: isSwipeLeft?Icon(Icons.delete):null,
-               )
-              ),
+                      },
+                      background: slideRightBackground(),
+                      secondaryBackground: slideLeftBackground(),
+                      key: Key(snapshot.data[i].toString()),
+                      child: InkWell(
+                       child:ListTile(
+                        title: Text(snapshot.data[i]["Site"]),
+                        subtitle: Text(snapshot.data[i]["Password"]),
+                         trailing: isSwipeLeft?Icon(Icons.delete):null,
+                       )
+                      ),
+                    );
+                  },
+                );
+              }
             );
-          },
+          }
         ),
-      ),
     );
   }
-  update(id,String site,String pass,context,platformChannel){
+  update(Map details,context,platformChannel){
     TextEditingController siteTextEditor=TextEditingController();
     TextEditingController passTextEditor=TextEditingController();
     DatabaseHelper helper=DatabaseHelper();
-    siteTextEditor.text=site;
-    passTextEditor.text=pass;
+    siteTextEditor.text=details['Site'];
+    passTextEditor.text=details['Password'];
     return showDialog(context: context,builder: (context){
       return AlertDialog(
         title: Text("Enter site and its Password"),
@@ -284,14 +288,11 @@ class _HomeState extends State<Home> {
         actions: <Widget>[
           RaisedButton(
             onPressed: ()async{
-              Map<String,dynamic> details=Map();
-              String EncryptedPassword=await platformChannel.invokeMethod("Encrypt",{"text":passTextEditor.text});
+              Map<String,dynamic> updatedDetails=Map();
+              String encryptedPassword=await platformChannel.invokeMethod("Encrypt",{"text":passTextEditor.text});
               String encryptedName = await platformChannel.invokeMethod("Encrypt",{"text": siteTextEditor.text});
-              details.addAll( {"id":id,"Site":encryptedName,"Password":EncryptedPassword});
-              helper.updataPass(details).whenComplete((){
-                getDataFromDb();
-              });
-
+              updatedDetails.addAll( {"id":details['id'],'created_at':details['created_at'],"Site":encryptedName,"Password":encryptedPassword,'userId':user.uid});
+              helper.updateData(updatedDetails);
               Navigator.pop(context);
               setState(() {
 

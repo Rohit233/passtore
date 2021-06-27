@@ -79,7 +79,6 @@ public class MainActivity extends FlutterActivity{
                         }
                         else if(methodCall.method.equals("Decrypt")){
                             String decryptText=decrypt(methodCall.argument("encryptedText"));
-//                            Toast.makeText(getApplicationContext(),decryptText,Toast.LENGTH_LONG).show();
                             result.success(decryptText);
                         }
                     }
